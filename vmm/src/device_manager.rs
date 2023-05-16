@@ -85,7 +85,7 @@ use vm_allocator::{AddressAllocator, SystemAllocator};
 use vm_device::dma_mapping::vfio::VfioDmaMapping;
 use vm_device::dma_mapping::ExternalDmaMapping;
 use vm_device::interrupt::{
-    InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
+    InterruptIndex, InterruptManager, InterruptSourceGroup, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
 use vm_device::{Bus, BusDevice, Resource};
 use vm_memory::guest_memory::FileOffset;
@@ -4230,6 +4230,36 @@ impl DeviceManager {
         }
 
         Ok(())
+    }
+
+    // The create_serverless_interrupt_devices return a list of interrupt_groups that can be used to interrupt the serverless devices.
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn create_serverless_interrupt_devices(&mut self) -> DeviceManagerResult<Vec<Arc<dyn InterruptSourceGroup>>> {
+        // Initialize the response
+
+        let mut interrupt_groups: Vec<Arc<dyn InterruptSourceGroup>> = Vec::new();
+        // We reserve 10 irq and create 10 interrupt routes in the LegacyUserspaceInterruptManager 
+        // for the serverless devices.
+        for _i in 0..10 {
+            let serverless_irq = self
+                .address_manager
+                .allocator
+                .lock()
+                .unwrap()
+                .allocate_irq()
+                .unwrap();
+
+            if let Some(legacy_interrupt_manager) = &self.legacy_interrupt_manager {
+                let interrupt_group = legacy_interrupt_manager
+                    .create_group(LegacyIrqGroupConfig {
+                        irq: serverless_irq as InterruptIndex,
+                    }).map_err(DeviceManagerError::CreateInterruptGroup);
+                // Add the interrupt group to the response
+                interrupt_groups.push(interrupt_group.unwrap());
+            } 
+        };
+        Ok(interrupt_groups)
     }
 
     pub(crate) fn acpi_platform_addresses(&self) -> &AcpiPlatformAddresses {

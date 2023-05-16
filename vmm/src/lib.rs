@@ -1169,6 +1169,15 @@ impl Vmm {
         }
     }
 
+
+    fn vm_start_eval(&mut self) -> result::Result<(), VmError> {
+        if let Some(ref mut vm) = self.vm {
+            vm.start_eval()
+        } else {
+            Err(VmError::Eval)
+        }
+    }
+
     fn vm_power_button(&mut self) -> result::Result<(), VmError> {
         if let Some(ref mut vm) = self.vm {
             vm.power_button()
@@ -1655,6 +1664,7 @@ impl Vmm {
         vm.complete_migration()
     }
 
+
     fn vm_send_migration(
         &mut self,
         send_data_migration: VmSendMigrationData,
@@ -1746,6 +1756,7 @@ impl Vmm {
             ))
         })
     }
+
 
     fn control_loop(
         &mut self,
@@ -2030,6 +2041,14 @@ impl Vmm {
                                     let response = self
                                         .vm_power_button()
                                         .map_err(ApiError::VmPowerButton)
+                                        .map(|_| ApiResponsePayload::Empty);
+
+                                    sender.send(response).map_err(Error::ApiResponseSend)?;
+                                }
+                                ApiRequest::VmStartEval(sender) => {
+                                    let response = self
+                                        .vm_start_eval()
+                                        .map_err(ApiError::VmStartEval)
                                         .map(|_| ApiResponsePayload::Empty);
 
                                     sender.send(response).map_err(Error::ApiResponseSend)?;

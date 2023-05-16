@@ -188,7 +188,35 @@ impl Aml for AcpiGedDevice {
                 ),
             ],
         )
-        .to_aml_bytes(sink)
+        .to_aml_bytes(sink);
+    // Create an ACPI configuration for the fake interrupt device
+    // TODO consider adding named interrupts 
+    // https://www.kernel.org/doc/html/latest/firmware-guide/acpi/enumeration.html#named-interrupts
+    // TODO also need to add the reservation of IRQ from the device manager
+    // Also use LegacyInterruptManager to trigger the interrupt 
+   
+    // Create 10 fake interrupt devices, each with a unique GSI from 14 to 23. The HID template should be "SERV000{}", where {} is the GSI-14. and the CID would be the same as the HID. The _UID should be "Function Device {}", where {} is the GSI.
+        for i in 0..10 {
+            aml::Device::new(
+                format!("_SB_.SRV{}",i).as_str().into(),
+                vec![
+                    &aml::Name::new("_HID".into(), &format!("SERV000{}", i)),
+                    &aml::Name::new("_CID".into(), &format!("SERV000{}", i)),
+                    &aml::Name::new("_UID".into(), &format!("Function Device {}", i)),
+                    &aml::Name::new("_STA".into(), &(0xF_usize)),
+                    &aml::Name::new(
+                        "_CRS".into(),
+                        &aml::ResourceTemplate::new(vec![&aml::Interrupt::new(
+                            true,
+                            true,
+                            false,
+                            false,
+                            14 + i,
+                        )]),
+                    ),
+                ],
+            ).to_aml_bytes(sink);        
+        }
     }
 }
 

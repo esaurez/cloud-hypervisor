@@ -67,8 +67,7 @@ use linux_loader::loader::KernelLoader;
 use seccompiler::SeccompAction;
 use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
@@ -85,6 +84,7 @@ use std::{result, str, thread};
 use thiserror::Error;
 use tracer::trace_scoped;
 use vm_device::Bus;
+use vm_device::interrupt::InterruptSourceGroup;
 #[cfg(feature = "tdx")]
 use vm_memory::{Address, ByteValued, GuestMemory, GuestMemoryRegion};
 use vm_memory::{Bytes, GuestAddress, GuestAddressSpace, GuestMemoryAtomic};
@@ -187,6 +187,12 @@ pub enum Error {
 
     #[error("Eventfd write error: {0}")]
     EventfdError(#[source] std::io::Error),
+    
+    #[error("Error creating serverless interrupt devices: {0:?}")]
+    CreateServerlessInterruptDevices(DeviceManagerError),
+
+    #[error("Error triggering serverless interrupt devices: {0}")]
+    TriggerServerlessInterrupt(#[source] io::Error),
 
     #[error("Cannot snapshot VM: {0}")]
     Snapshot(#[source] MigratableError),
@@ -298,6 +304,9 @@ pub enum Error {
     #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
     #[error("Error coredumping VM: {0:?}")]
     Coredump(GuestDebuggableError),
+
+    #[error("Error running the evaluation")]
+    Eval,
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -443,6 +452,7 @@ pub struct Vm {
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
     stop_on_boot: bool,
     load_payload_handle: Option<thread::JoinHandle<Result<EntryPoint>>>,
+    serverless_interrupt_vec: Vec<Arc<dyn InterruptSourceGroup>>,
 }
 
 impl Vm {
@@ -645,6 +655,7 @@ impl Vm {
             hypervisor,
             stop_on_boot,
             load_payload_handle,
+            serverless_interrupt_vec: Vec::new(), 
         })
     }
 
@@ -2305,6 +2316,31 @@ impl Vm {
             + note_size as u64
             + size_of::<elf::Elf64_Phdr>() as u64 * phdr_num as u64
     }
+
+    fn expose_irqfds(&mut self) -> Result<()> {
+        // Create the serverless interrupt devices via the device manager and assign them to the serverless_interrupt_vec
+        self.serverless_interrupt_vec = self
+            .device_manager
+            .lock()
+            .unwrap()
+            .create_serverless_interrupt_devices()
+            .map_err(|e| Error::CreateServerlessInterruptDevices(e.into()))?;
+        Ok(())
+    }
+    
+    pub fn start_eval(&mut self) -> Result<()> {
+        // let mem = self.create_shared_memory();
+        // Create the irqfd eventfds file
+        self.expose_irqfds()?;
+        // Iterate over the serverless_interrupt_vec and trigger the interrupt group
+        for serverless_interrupt in self.serverless_interrupt_vec.iter() {
+            serverless_interrupt
+                .trigger(0)
+                .map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
+        }
+        Ok(())
+    }
+
 }
 
 impl Pausable for Vm {

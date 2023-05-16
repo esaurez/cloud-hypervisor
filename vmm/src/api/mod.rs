@@ -152,6 +152,9 @@ pub enum ApiError {
 
     /// Error triggering power button
     VmPowerButton(VmError),
+
+    // Error starting eval
+    VmStartEval(VmError),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
@@ -332,6 +335,8 @@ pub enum ApiRequest {
 
     // Trigger power button
     VmPowerButton(Sender<ApiResponse>),
+
+    VmStartEval(Sender<ApiResponse>),
 }
 
 pub fn vm_create(
@@ -428,6 +433,9 @@ pub enum VmAction {
 
     /// Power Button for clean shutdown
     PowerButton,
+
+    // Trigger start eval
+    StartEval,
 }
 
 fn vm_action(
@@ -464,6 +472,7 @@ fn vm_action(
         ReceiveMigration(v) => ApiRequest::VmReceiveMigration(v, response_sender),
         SendMigration(v) => ApiRequest::VmSendMigration(v, response_sender),
         PowerButton => ApiRequest::VmPowerButton(response_sender),
+        StartEval => ApiRequest::VmStartEval(response_sender),
     };
 
     // Send the VM request.
@@ -688,4 +697,8 @@ pub fn vm_add_vsock(
     data: Arc<VsockConfig>,
 ) -> ApiResult<Option<Body>> {
     vm_action(api_evt, api_sender, VmAction::AddVsock(data))
+}
+
+pub fn vm_start_eval(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<Option<Body>> {
+    vm_action(api_evt, api_sender, VmAction::StartEval)
 }

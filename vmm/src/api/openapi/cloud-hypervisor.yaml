@@ -431,6 +431,16 @@ paths:
         500:
           description: The VM migration could not be sent.
 
+  /vmm.start-eval:
+    put:
+      summary: Starts the interupt evaluation with the guest 
+      operationId: startEval 
+      responses:
+        204:
+          description: The operation completed successfully. 
+        500:
+          description: The operation failed. 
+
 components:
   schemas:
     VmmPingResponse:

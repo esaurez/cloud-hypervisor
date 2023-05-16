@@ -247,7 +247,7 @@ pub static HTTP_ROUTES: Lazy<HttpRoutes> = Lazy::new(|| {
         .insert(endpoint!("/vmm.ping"), Box::new(VmmPing {}));
     r.routes
         .insert(endpoint!("/vmm.shutdown"), Box::new(VmmShutdown {}));
-
+    r.routes.insert(endpoint!("/vm.start-eval"), Box::new(VmActionHandler::new(VmAction::StartEval)));
     r
 });
 

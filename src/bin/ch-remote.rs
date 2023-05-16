@@ -401,6 +401,9 @@ fn do_command(toplevel: &TopLevel) -> Result<(), Error> {
         ),
         SubCommandEnum::ReceiveMigration(ref config) => {
             receive_migration_api_command(&mut socket, &config.receive_migration_config)
+        },
+        SubCommandEnum::StartEval(_) => {
+            simple_api_command(&mut socket, "PUT", "start-eval", None).map_err(Error::ApiClient)
         }
         SubCommandEnum::Create(ref config) => create_api_command(&mut socket, &config.vm_config),
         SubCommandEnum::Version(_) => {
@@ -453,6 +456,7 @@ enum SubCommandEnum {
     ReceiveMigration(ReceiveMigrationSubcommand),
     Create(CreateSubcommand),
     Version(VersionSubcommand),
+    StartEval(StartEvalSubcommand),
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -683,6 +687,12 @@ struct CreateSubcommand {
 #[argh(subcommand, name = "version")]
 /// Print version information
 struct VersionSubcommand {}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "start-eval")]
+/// Start eval 
+struct StartEvalSubcommand {}
+
 
 fn main() {
     let toplevel: TopLevel = argh::from_env();

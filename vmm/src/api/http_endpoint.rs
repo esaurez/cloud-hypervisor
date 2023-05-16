@@ -10,7 +10,7 @@ use crate::api::{
     vm_add_device, vm_add_disk, vm_add_fs, vm_add_net, vm_add_pmem, vm_add_user_device,
     vm_add_vdpa, vm_add_vsock, vm_boot, vm_counters, vm_create, vm_delete, vm_info, vm_pause,
     vm_power_button, vm_reboot, vm_receive_migration, vm_remove_device, vm_resize, vm_resize_zone,
-    vm_restore, vm_resume, vm_send_migration, vm_shutdown, vm_snapshot, vmm_ping, vmm_shutdown,
+    vm_restore, vm_resume, vm_send_migration, vm_shutdown, vm_snapshot, vmm_ping, vmm_shutdown, vm_start_eval,
     ApiRequest, VmAction, VmConfig,
 };
 use crate::config::NetConfig;
@@ -185,6 +185,7 @@ impl EndpointHandler for VmActionHandler {
                 Pause => vm_pause(api_notifier, api_sender),
                 Resume => vm_resume(api_notifier, api_sender),
                 PowerButton => vm_power_button(api_notifier, api_sender),
+                StartEval => vm_start_eval(api_notifier, api_sender),
                 _ => return Err(HttpError::BadRequest),
             }
         }
