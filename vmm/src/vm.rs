@@ -79,7 +79,7 @@ use std::num::Wrapping;
 use std::ops::Deref;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::{result, str, thread};
 use thiserror::Error;
 use tracer::trace_scoped;
@@ -87,7 +87,7 @@ use vm_device::Bus;
 use vm_device::interrupt::InterruptSourceGroup;
 #[cfg(feature = "tdx")]
 use vm_memory::{Address, ByteValued, GuestMemory, GuestMemoryRegion};
-use vm_memory::{Bytes, GuestAddress, GuestAddressSpace, GuestMemoryAtomic};
+use vm_memory::{Bytes, GuestAddress, GuestAddressSpace, GuestMemoryAtomic, GuestMemoryError};
 use vm_migration::protocol::{Request, Response, Status};
 use vm_migration::{
     protocol::MemoryRangeTable, snapshot_from_id, Migratable, MigratableError, Pausable, Snapshot,
@@ -307,6 +307,12 @@ pub enum Error {
 
     #[error("Error running the evaluation")]
     Eval,
+
+    #[error("Error writing to shared mem: {0}")]
+    EvalSharedMemWrite(GuestMemoryError),
+
+    #[error("Error writing to file: {0}")]
+    EvalFileWrite(std::io::Error),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -2319,25 +2325,108 @@ impl Vm {
 
     fn expose_irqfds(&mut self) -> Result<()> {
         // Create the serverless interrupt devices via the device manager and assign them to the serverless_interrupt_vec
-        self.serverless_interrupt_vec = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .create_serverless_interrupt_devices()
-            .map_err(|e| Error::CreateServerlessInterruptDevices(e.into()))?;
+        // Check severless interrupt vec is empty
+        if self.serverless_interrupt_vec.is_empty() {
+            self.serverless_interrupt_vec = self
+                .device_manager
+                .lock()
+                .unwrap()
+                .create_serverless_interrupt_devices()
+                .map_err(|e| Error::CreateServerlessInterruptDevices(e.into()))?;
+        }
         Ok(())
     }
-    
+
     pub fn start_eval(&mut self) -> Result<()> {
-        // let mem = self.create_shared_memory();
         // Create the irqfd eventfds file
         self.expose_irqfds()?;
-        // Iterate over the serverless_interrupt_vec and trigger the interrupt group
-        for serverless_interrupt in self.serverless_interrupt_vec.iter() {
-            serverless_interrupt
-                .trigger(0)
-                .map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
+        // Get first interrupt device
+        let serverless_interrupt = self.serverless_interrupt_vec[0].clone();
+
+        // Write i to the first byte of mem1_region and mem2_region
+        let read_base_address= GuestAddress(0x140000000); // This is the read region
+        let write_base_address = GuestAddress(0x180000000); // This is the write region
+        // Write 4 kilobyte zeroes to both regions
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[0; 4096], read_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[0; 4096],write_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?; 
+
+        // Create a vector of Duration
+        let mut durations = Vec::new();
+
+        // Do 100 iterations  of writing 1 to mem1_base_address and mem2_base_address, and triggering the interrupt and waiting for the response, and measure the time by using rdtsc
+        for i in 1..101 {
+            // Write 0 to read_base_address and write_base_address
+            self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[0], read_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+            self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[0], write_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+            // Start time measurement
+            let start = Instant::now(); 
+            // Write 1 to mem1_base_address and mem2_base_address
+            self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[1], read_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+            // Trigger the interrupt
+            serverless_interrupt.trigger(0).map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
+            loop {
+                // Read write_base_addres and loop until first byte is 1 
+                let mut data = [0u8; 1];
+                self.memory_manager.lock().unwrap().guest_memory().memory().read_slice(&mut data, write_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+                if data[0] == i {
+                    break;
+                } 
+            }
+            // End time measurement
+            let end = Instant::now(); 
+            // Calculate the time in microseconds
+            let duration = (end - start).as_micros();
+            durations.push(duration);
         }
+        // Write to the memory locations a two
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[2], read_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        // Trigger the interrupt again
+        serverless_interrupt.trigger(0).map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
+        // write durations to file /tmp/durations_interrupt.txt
+        let mut file = File::create("/tmp/durations_interrupt.txt").map_err(|e| Error::EvalFileWrite(e.into()))?;
+        for duration in durations {
+            file.write_all(format!("{:?}\n", duration).as_bytes()).map_err(|e| Error::EvalFileWrite(e.into()))?;
+        }
+        Ok(())
+    }
+
+    
+    pub fn start_eval2(&mut self) -> Result<()> {
+        // Create the irqfd eventfds file
+        self.expose_irqfds()?;
+        // Get first interrupt device
+        let serverless_interrupt = self.serverless_interrupt_vec[0].clone();
+
+        // Write i to the first byte of mem1_region and mem2_region
+        let mem1_base_address = GuestAddress(0x140000000);
+        let mem2_base_address = GuestAddress(0x180000000);
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[1], mem1_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[1],mem2_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        serverless_interrupt.trigger(0).map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
+        // read both memory locations, and wait for it to be 0, wait 100 ms between each iteration
+        let mut count = 0;
+        loop {
+            if count > 100 {
+                return Err(Error::Eval);
+            }
+            // Read mem1_base_address
+            let mut mem1_data = [0u8; 1];
+            self.memory_manager.lock().unwrap().guest_memory().memory().read_slice(&mut mem1_data, mem1_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+            // Read mem2_base_address
+            let mut mem2_data = [0u8; 1];
+            self.memory_manager.lock().unwrap().guest_memory().memory().read_slice(&mut mem2_data, mem2_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+            if mem1_data[0] == 0 || mem2_data[0] == 0 {
+                break;
+            }
+            count += 1;
+            // Sleep for 100 ms
+            thread::sleep(Duration::from_millis(100));
+        }
+        // Write to the memory locations a two
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[2], mem1_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        self.memory_manager.lock().unwrap().guest_memory().memory().write_slice(&[2], mem2_base_address,).map_err(|e| Error::EvalSharedMemWrite(e.into()))?;
+        // Trigger the interrupt again
+        serverless_interrupt.trigger(0).map_err(|e| Error::TriggerServerlessInterrupt(e.into()))?;
         Ok(())
     }
 
