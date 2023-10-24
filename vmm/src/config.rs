@@ -66,6 +66,8 @@ pub enum Error {
     ParseDevicePathMissing,
     /// Failed parsing vsock parameters
     ParseVsock(OptionParserError),
+    /// Failed parsing nimble net parameters
+    ParseNimbleNet(OptionParserError),
     /// Failed parsing restore parameters
     ParseRestore(OptionParserError),
     /// Failed parsing SGX EPC parameters
@@ -304,6 +306,7 @@ impl fmt::Display for Error {
             ParsePersistentMemory(o) => write!(f, "Error parsing --pmem: {o}"),
             ParsePmemFileMissing => write!(f, "Error parsing --pmem: file missing"),
             ParseVsock(o) => write!(f, "Error parsing --vsock: {o}"),
+            ParseNimbleNet(o) => write!(f, "Error parsing --nimble-net: {o}"),
             ParseVsockCidMissing => write!(f, "Error parsing --vsock: cid missing"),
             ParseVsockSockMissing => write!(f, "Error parsing --vsock: socket missing"),
             ParseMemory(o) => write!(f, "Error parsing --memory: {o}"),
@@ -370,6 +373,7 @@ pub struct VmParams<'a> {
     pub user_devices: Option<Vec<&'a str>>,
     pub vdpa: Option<Vec<&'a str>>,
     pub vsock: Option<&'a str>,
+    pub nimble_net: Option<Vec<&'a str>>,
     #[cfg(target_arch = "x86_64")]
     pub sgx_epc: Option<Vec<&'a str>>,
     pub numa: Option<Vec<&'a str>>,
@@ -1554,6 +1558,77 @@ impl VsockConfig {
     }
 }
 
+impl NimbleNetConfig {
+    pub fn parse(nimble_net: &str) -> Result<Self> {
+        let mut parser = OptionParser::new();
+        parser
+            .add("size")
+            .add("iommu")
+            .add("num_queues")
+            .add("queue_size")
+            .add("id")
+            .add("socket")
+            .add("vhost_mode")
+            .add("pci_segment");
+        parser.parse(nimble_net).map_err(Error::ParseNimbleNet)?;
+
+        let size = parser
+            .convert::<ByteSized>("size")
+            .map_err(Error::ParseNimbleNet)?
+            .map(|v| v.0);
+        let iommu = parser
+            .convert::<Toggle>("iommu")
+            .map_err(Error::ParseNimbleNet)?
+            .unwrap_or(Toggle(false))
+            .0;
+        let num_queues = parser
+            .convert("num_queues")
+            .map_err(Error::ParseNimbleNet)?
+            .unwrap_or_else(default_nimblenetconfig_num_queues);
+        let queue_size = parser
+            .convert("queue_size")
+            .map_err(Error::ParseNimbleNet)?
+            .unwrap_or_else(default_nimblenetconfig_queue_size);
+        let id = parser.get("id");
+        let vhost_socket = parser.get("socket");
+        let vhost_mode = parser
+            .convert("vhost_mode")
+            .map_err(Error::ParseNetwork)?
+            .unwrap_or_default();
+        let pci_segment = parser
+            .convert("pci_segment")
+            .map_err(Error::ParseNimbleNet)?
+            .unwrap_or_default();
+
+        Ok(NimbleNetConfig {
+            size,
+            iommu,
+            num_queues,
+            queue_size,
+            vhost_socket,
+            vhost_mode,
+            id,
+            pci_segment,
+        })
+    }
+
+    pub fn validate(&self, vm_config: &VmConfig) -> ValidationResult<()> {
+        if let Some(platform_config) = vm_config.platform.as_ref() {
+            if self.pci_segment >= platform_config.num_pci_segments {
+                return Err(ValidationError::InvalidPciSegment(self.pci_segment));
+            }
+
+            if let Some(iommu_segments) = platform_config.iommu_segments.as_ref() {
+                if iommu_segments.contains(&self.pci_segment) && !self.iommu {
+                    return Err(ValidationError::OnIommuSegment(self.pci_segment));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 impl SgxEpcConfig {
     pub fn parse(sgx_epc: &str) -> Result<Self> {
@@ -2020,6 +2095,16 @@ impl VmConfig {
             vsock = Some(vsock_config);
         }
 
+        let mut nimble_net: Option<Vec<NimbleNetConfig>> = None;
+        if let Some(nimble_net_list) = &vm_params.nimble_net {
+            let mut nimble_net_config_list = Vec::new();
+            for item in nimble_net_list.iter() {
+                let nimble_net_config = NimbleNetConfig::parse(item)?;
+                nimble_net_config_list.push(nimble_net_config);
+            }
+            nimble_net = Some(nimble_net_config_list);
+        }
+
         let platform = vm_params.platform.map(PlatformConfig::parse).transpose()?;
 
         #[cfg(target_arch = "x86_64")]
@@ -2084,6 +2169,7 @@ impl VmConfig {
             user_devices,
             vdpa,
             vsock,
+            nimble_net,
             iommu: false, // updated in VmConfig::validate()
             #[cfg(target_arch = "x86_64")]
             sgx_epc,
@@ -2138,6 +2224,7 @@ impl Clone for VmConfig {
             user_devices: self.user_devices.clone(),
             vdpa: self.vdpa.clone(),
             vsock: self.vsock.clone(),
+            nimble_net: self.nimble_net.clone(),
             #[cfg(target_arch = "x86_64")]
             sgx_epc: self.sgx_epc.clone(),
             numa: self.numa.clone(),
@@ -2767,6 +2854,7 @@ mod tests {
             user_devices: None,
             vdpa: None,
             vsock: None,
+            nimble_net: None,
             iommu: false,
             #[cfg(target_arch = "x86_64")]
             sgx_epc: None,

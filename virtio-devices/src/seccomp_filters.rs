@@ -26,6 +26,7 @@ pub enum Thread {
     VirtioVhostNetCtl,
     VirtioVsock,
     VirtioWatchdog,
+    VirtioVhostNimbleNet,
 }
 
 /// Shorthand for chaining `SeccompCondition`s with the `and` operator  in a `SeccompRule`.
@@ -187,6 +188,28 @@ fn virtio_vhost_net_thread_rules() -> Vec<(i64, Vec<SeccompRule>)> {
     ]
 }
 
+fn virtio_vhost_nimble_net_thread_rules() -> Vec<(i64, Vec<SeccompRule>)> {
+    vec![
+        (libc::SYS_accept4, vec![]),
+        (libc::SYS_bind, vec![]),
+        (libc::SYS_clock_nanosleep, vec![]),
+        (libc::SYS_connect, vec![]),
+        (libc::SYS_getcwd, vec![]),
+        (libc::SYS_listen, vec![]),
+        (libc::SYS_nanosleep, vec![]),
+        (libc::SYS_pread64, vec![]),
+        (libc::SYS_pwrite64, vec![]),
+        (libc::SYS_recvmsg, vec![]),
+        (libc::SYS_sendmsg, vec![]),
+        (libc::SYS_sendto, vec![]),
+        (libc::SYS_socket, vec![]),
+        #[cfg(target_arch = "x86_64")]
+        (libc::SYS_unlink, vec![]),
+        #[cfg(target_arch = "aarch64")]
+        (libc::SYS_unlinkat, vec![]),
+    ]
+}
+
 fn virtio_vhost_block_thread_rules() -> Vec<(i64, Vec<SeccompRule>)> {
     vec![
         (libc::SYS_clock_nanosleep, vec![]),
@@ -238,6 +261,7 @@ fn get_seccomp_rules(thread_type: Thread) -> Vec<(i64, Vec<SeccompRule>)> {
         Thread::VirtioVhostNetCtl => virtio_vhost_net_ctl_thread_rules(),
         Thread::VirtioVsock => virtio_vsock_thread_rules(),
         Thread::VirtioWatchdog => virtio_watchdog_thread_rules(),
+        Thread::VirtioVhostNimbleNet => virtio_vhost_nimble_net_thread_rules(),
     };
     rules.append(&mut virtio_thread_common());
     rules

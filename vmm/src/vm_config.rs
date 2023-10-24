@@ -426,6 +426,38 @@ pub struct PmemConfig {
     pub pci_segment: u16,
 }
 
+pub const DEFAULT_NIMBLE_NET_NUM_QUEUES: usize = 2;
+
+pub fn default_nimblenetconfig_num_queues() -> usize {
+    DEFAULT_NIMBLE_NET_NUM_QUEUES
+}
+
+pub const DEFAULT_NIMBLE_NET_QUEUE_SIZE: u16 = 2;
+
+pub fn default_nimblenetconfig_queue_size() -> u16 {
+    DEFAULT_NIMBLE_NET_QUEUE_SIZE
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub struct NimbleNetConfig {
+    // Size of the shared memory region
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub iommu: bool,
+    #[serde(default = "default_nimblenetconfig_num_queues")]
+    pub num_queues: usize,
+    #[serde(default = "default_nimblenetconfig_queue_size")]
+    pub queue_size: u16,
+    pub vhost_socket: Option<String>,
+    #[serde(default)]
+    pub vhost_mode: VhostMode,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub pci_segment: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ConsoleOutputMode {
     Off,
@@ -585,6 +617,7 @@ pub struct VmConfig {
     pub user_devices: Option<Vec<UserDeviceConfig>>,
     pub vdpa: Option<Vec<VdpaConfig>>,
     pub vsock: Option<VsockConfig>,
+    pub nimble_net: Option<Vec<NimbleNetConfig>>,
     #[serde(default)]
     pub iommu: bool,
     #[cfg(target_arch = "x86_64")]

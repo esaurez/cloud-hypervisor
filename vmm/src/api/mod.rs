@@ -40,6 +40,7 @@ use crate::config::{
 };
 use crate::device_tree::DeviceTree;
 use crate::vm::{Error as VmError, VmState};
+use crate::vm_config::NimbleNetConfig;
 use micro_http::Body;
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -143,6 +144,9 @@ pub enum ApiError {
 
     /// The vsock device could not be added to the VM.
     VmAddVsock(VmError),
+
+    // The nimble net device could not be added to the VM
+    VmAddNimbleNet(VmError),
 
     /// Error starting migration receiever
     VmReceiveMigration(MigratableError),
@@ -313,6 +317,9 @@ pub enum ApiRequest {
     /// Add a vsock device to the VM.
     VmAddVsock(Arc<VsockConfig>, Sender<ApiResponse>),
 
+    // Add a nimble network device to the VM
+    VmAddNimbleNet(Arc<NimbleNetConfig>, Sender<ApiResponse>),
+
     /// Take a VM snapshot
     VmSnapshot(Arc<VmSnapshotConfig>, Sender<ApiResponse>),
 
@@ -397,6 +404,9 @@ pub enum VmAction {
     /// Add vsock
     AddVsock(Arc<VsockConfig>),
 
+    /// Add nimble network
+    AddNimbleNet(Arc<NimbleNetConfig>),
+
     /// Add user  device
     AddUserDevice(Arc<UserDeviceConfig>),
 
@@ -452,6 +462,7 @@ fn vm_action(
         AddNet(v) => ApiRequest::VmAddNet(v, response_sender),
         AddVdpa(v) => ApiRequest::VmAddVdpa(v, response_sender),
         AddVsock(v) => ApiRequest::VmAddVsock(v, response_sender),
+        AddNimbleNet(v) => ApiRequest::VmAddNimbleNet(v, response_sender),
         AddUserDevice(v) => ApiRequest::VmAddUserDevice(v, response_sender),
         RemoveDevice(v) => ApiRequest::VmRemoveDevice(v, response_sender),
         Resize(v) => ApiRequest::VmResize(v, response_sender),
@@ -687,4 +698,12 @@ pub fn vm_add_vsock(
     data: Arc<VsockConfig>,
 ) -> ApiResult<Option<Body>> {
     vm_action(api_evt, api_sender, VmAction::AddVsock(data))
+}
+
+pub fn vm_add_nimble_net(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    data: Arc<NimbleNetConfig>,
+) -> ApiResult<Option<Body>> {
+    vm_action(api_evt, api_sender, VmAction::AddNimbleNet(data))
 }

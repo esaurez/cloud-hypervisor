@@ -1425,6 +1425,13 @@ impl MemoryManager {
         Ok(start_addr)
     }
 
+    pub fn add_mem_region(
+        &mut self, new_region: Arc<GuestRegionMmap>, 
+    ) -> Result<(), Error> {
+        self.add_region(new_region)?;
+        Ok(())
+    }
+
     pub fn add_ram_region(
         &mut self,
         start_addr: GuestAddress,
@@ -1463,7 +1470,7 @@ impl MemoryManager {
             file_offset: 0,
         });
 
-        self.add_region(Arc::clone(&region))?;
+        self.add_region(region.clone())?;
 
         Ok(region)
     }

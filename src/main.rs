@@ -215,6 +215,10 @@ pub struct TopLevel {
     /// cid=<context_id>,socket=<socket_path>,iommu=on|off,id=<device_id>,pci_segment=<segment_id>
     vsock: Option<String>,
 
+    #[argh(option, long = "nimble-net")]
+    /// size=<shared_memory_size>,iommu=on|off,,num_queues=<number_of_queues>,queue_size=<size_of_each_queue>,socket=<vhost_user_socket_path>,vhost_mode=client|server,id=<device_id>,pci_segment=<segment_id>
+    nimble_net: Vec<String>,
+
     #[argh(option, long = "numa")]
     /// guest_numa_id=<node_id>,cpus=<cpus_id>,distances=<list_of_distances_to_destination_nodes>,memory_zones=<list_of_memory_zones>,sgx_epc_sections=<list_of_sgx_epc_sections>
     numa: Vec<String>,
@@ -324,6 +328,12 @@ impl TopLevel {
         };
 
         let vsock = self.vsock.as_deref();
+
+        let nimble_net = if !self.nimble_net.is_empty() {
+            Some(self.nimble_net.iter().map(|x| x.as_str()).collect())
+        } else {
+            None
+        };
         #[cfg(target_arch = "x86_64")]
         let sgx_epc = if !self.sgx_epc.is_empty() {
             Some(self.sgx_epc.iter().map(|x| x.as_str()).collect())
@@ -362,6 +372,7 @@ impl TopLevel {
             user_devices,
             vdpa,
             vsock,
+            nimble_net,
             #[cfg(target_arch = "x86_64")]
             sgx_epc,
             numa,

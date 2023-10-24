@@ -32,6 +32,7 @@ use seccompiler::{apply_filter, SeccompAction};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
+use vm_config::NimbleNetConfig;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
@@ -1127,6 +1128,32 @@ impl Vmm {
         }
     }
 
+    fn vm_add_nimble_net(&mut self, nimble_net_cfg: NimbleNetConfig) -> result::Result<Option<Vec<u8>>, VmError> {
+        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
+        {
+            // Validate the configuration change in a cloned configuration
+            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
+            add_to_config(&mut config.nimble_net, nimble_net_cfg.clone());
+            config.validate().map_err(VmError::ConfigValidation)?;
+        }
+
+        if let Some(ref mut vm) = self.vm {
+            let info = vm.add_nimble_net(nimble_net_cfg).map_err(|e| {
+                error!("Error when adding new nimble network device to the VM: {:?}", e);
+                e
+            })?;
+            serde_json::to_vec(&info)
+                .map(Some)
+                .map_err(VmError::SerializeJson)
+        } else {
+            // Update VmConfig by adding the new device.
+            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
+            add_to_config(&mut config.nimble_net, nimble_net_cfg);
+            Ok(None)
+        }
+    }
+
+
     fn vm_counters(&mut self) -> result::Result<Option<Vec<u8>>, VmError> {
         if let Some(ref mut vm) = self.vm {
             let info = vm.counters().map_err(|e| {
@@ -1975,6 +2002,13 @@ impl Vmm {
                                         .map(ApiResponsePayload::VmAction);
                                     sender.send(response).map_err(Error::ApiResponseSend)?;
                                 }
+                                ApiRequest::VmAddNimbleNet(add_nimble_net_data, sender ) => {
+                                    let response = self
+                                        .vm_add_nimble_net(add_nimble_net_data.as_ref().clone())
+                                        .map_err(ApiError::VmAddNimbleNet)
+                                        .map(ApiResponsePayload::VmAction);
+                                    sender.send(response).map_err(Error::ApiResponseSend)?;
+                                }
                                 ApiRequest::VmCounters(sender) => {
                                     let response = self
                                         .vm_counters()
@@ -2127,6 +2161,7 @@ mod unit_tests {
             user_devices: None,
             vdpa: None,
             vsock: None,
+            nimble_net: None,
             iommu: false,
             #[cfg(target_arch = "x86_64")]
             sgx_epc: None,

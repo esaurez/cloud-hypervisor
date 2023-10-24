@@ -11,7 +11,7 @@
 
 use crate::config::{
     ConsoleOutputMode, DeviceConfig, DiskConfig, FsConfig, NetConfig, PmemConfig, UserDeviceConfig,
-    VdpaConfig, VhostMode, VmConfig, VsockConfig,
+    NimbleNetConfig, VdpaConfig, VhostMode, VmConfig, VsockConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
 use crate::device_tree::{DeviceNode, DeviceTree};
@@ -69,7 +69,7 @@ use std::num::Wrapping;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::PathBuf;
-use std::result;
+use std::{result, ffi};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -79,7 +79,7 @@ use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
 use virtio_devices::vhost_user::VhostUserConfig;
 use virtio_devices::{
-    AccessPlatformMapping, ActivateError, VdpaDmaMapping, VirtioMemMappingSource,
+    AccessPlatformMapping, ActivateError, MmapRegion, VdpaDmaMapping, VirtioMemMappingSource, VirtioSharedMemory, VirtioSharedMemoryList,
 };
 use virtio_devices::{Endpoint, IommuMapping};
 use vm_allocator::{AddressAllocator, SystemAllocator};
@@ -91,7 +91,7 @@ use vm_device::interrupt::{
 use vm_device::{Bus, BusDevice, Resource};
 use vm_memory::guest_memory::FileOffset;
 use vm_memory::GuestMemoryRegion;
-use vm_memory::{Address, GuestAddress, GuestUsize, MmapRegion};
+use vm_memory::{Address, GuestAddress, GuestUsize};
 #[cfg(target_arch = "x86_64")]
 use vm_memory::{GuestAddressSpace, GuestMemory};
 use vm_migration::{
@@ -123,6 +123,7 @@ const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
 const FS_DEVICE_NAME_PREFIX: &str = "_fs";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
 const PMEM_DEVICE_NAME_PREFIX: &str = "_pmem";
+const NIMBLE_NET_DEVICE_NAME_PREFIX: &str = "_nimble_net";
 const VDPA_DEVICE_NAME_PREFIX: &str = "_vdpa";
 const VSOCK_DEVICE_NAME_PREFIX: &str = "_vsock";
 const WATCHDOG_DEVICE_NAME: &str = "__watchdog";
@@ -162,6 +163,12 @@ pub enum DeviceManagerError {
 
     /// Cannot create vhost-user-blk device
     CreateVhostUserBlk(virtio_devices::vhost_user::Error),
+
+    // Virtio-nimble-net device was created without a socket
+    NoVirtioNimbleNetSock, 
+
+    // Cannot create vhost-user-nimble-net device
+    CreateVhostUserNimbleNet(virtio_devices::vhost_user::Error),
 
     /// Cannot create virtio-pmem device
     CreateVirtioPmem(io::Error),
@@ -472,6 +479,16 @@ pub enum DeviceManagerError {
 
     /// Failed retrieving device state from snapshot
     RestoreGetState(MigratableError),
+
+    /// Failed to create memfd  
+    CreateMemfd(io::Error),
+
+    // Failed 
+    SharedFileSetLen(io::Error),
+
+    // Failed to create guest region mmap
+    GuestRegionMmap(vm_memory::mmap::Error),
+
 }
 pub type DeviceManagerResult<T> = result::Result<T, DeviceManagerError>;
 
@@ -2120,6 +2137,9 @@ impl DeviceManager {
         // Add virtio-pmem if required
         devices.append(&mut self.make_virtio_pmem_devices()?);
 
+        // Add virtio-nimble-net if required
+        devices.append(&mut self.make_virtio_nimble_net_devices()?);
+
         // Add virtio-vsock if required
         devices.append(&mut self.make_virtio_vsock_devices()?);
 
@@ -2795,6 +2815,187 @@ impl DeviceManager {
             }
         }
         self.config.lock().unwrap().pmem = pmem_devices;
+
+        Ok(devices)
+    }
+
+    fn create_anonymous_file_segment(
+        name: &str, 
+        size: u64,
+        hugepages: bool, 
+        hugepage_size: Option<u64>
+    ) -> DeviceManagerResult<FileOffset> {
+
+        let flags: u32  = libc::MFD_CLOEXEC
+                | if hugepages {
+                    libc::MFD_HUGETLB
+                        | if let Some(hugepage_size) = hugepage_size {
+                            // See create_anonymous_file in memory_manager for more info on this configuration
+                            hugepage_size.trailing_zeros() << 26
+                        } else {
+                            // Use the system default huge page size
+                           0 
+                        }
+                } else {
+                   0 
+                };
+
+        let res = unsafe { libc::syscall(libc::SYS_memfd_create, ffi::CString::new(name).unwrap(), flags) };
+
+        if res < 0 {
+            return Err(DeviceManagerError::CreateMemfd(io::Error::last_os_error()));
+        } 
+
+        // SAFETY: fd is valid
+        let f = unsafe { File::from_raw_fd(res as RawFd) };
+        f.set_len(size).map_err(DeviceManagerError::SharedFileSetLen)?;
+
+        let fo = FileOffset::new(f, 0);
+        
+        Ok(fo)
+    } 
+
+    fn mmap_file_offset(fo: &FileOffset, prefault: bool, size: usize) -> DeviceManagerResult<(MmapRegion, VirtioSharedMemoryList)>
+    {
+        let mut mmap_flags = libc::MAP_NORESERVE | libc::MAP_SHARED;
+        if prefault {
+            mmap_flags |= libc::MAP_POPULATE;
+        }
+
+        let mmap_region = MmapRegion::build(
+            Some(fo.clone()),
+            size as usize,
+            libc::PROT_READ | libc::PROT_WRITE,
+            mmap_flags,
+        )
+        .map_err(DeviceManagerError::NewMmapRegion)?;
+
+    let host_addr =  mmap_region.as_ptr() as u64;
+
+        let region_list = vec![VirtioSharedMemory {
+            offset: 0,
+            len: size as u64,
+        }];
+
+        Ok((mmap_region,
+            VirtioSharedMemoryList {
+                host_addr,
+                mem_slot: std::u32::MAX,
+                addr: GuestAddress(0),
+                len: size as GuestUsize,
+                region_list,
+            },
+        ))
+    }
+
+   fn make_virtio_nimble_net_device(
+        &mut self,
+        nimble_net_cfg: &mut NimbleNetConfig,
+    ) -> DeviceManagerResult<MetaVirtioDevice> {
+        let id = if let Some(id) = &nimble_net_cfg.id {
+            id.clone()
+        } else {
+            let id = self.next_device_name(NIMBLE_NET_DEVICE_NAME_PREFIX)?;
+            nimble_net_cfg.id = Some(id.clone());
+            id
+        };
+
+        info!("Creating virtio-nimble-net device: {:?}", nimble_net_cfg);
+
+        // \TODO add support for migration, migration may be broken
+        // Guest address may be incorrect
+        let mut node = device_node!(id);
+
+        let snapshot = snapshot_from_id(self.snapshot.as_ref(), id.as_str());
+
+        if let Some(socket) = &nimble_net_cfg.vhost_socket {
+            // Make shared anonymous file to be used as a shared memory mapping
+            let size = nimble_net_cfg.size.unwrap();
+            let fo = Self::create_anonymous_file_segment("nimble_net", size, true, None)?;
+
+            // Allocate memory from the mmio_allocator
+            let prefault : bool = false;
+            let (mmap_region, mut virtio_shm_list) = Self::mmap_file_offset(&fo, prefault, size as usize)?;
+
+            let vu_cfg = VhostUserConfig {
+                socket: socket.clone(),
+                num_queues: nimble_net_cfg.num_queues,
+                queue_size: nimble_net_cfg.queue_size,
+            };
+            let server = match nimble_net_cfg.vhost_mode {
+                VhostMode::Client => false,
+                VhostMode::Server => true,
+            };
+
+            // Allocate memory space with support for huge pages
+            let base = self.pci_segments[nimble_net_cfg.pci_segment as usize]
+                .allocator
+                .lock()
+                .unwrap()
+                .allocate(None, size as GuestUsize, Some(0x0020_0000))
+                .ok_or(DeviceManagerError::PmemRangeAllocation)?;
+
+            let host_addr: u64 = mmap_region.as_ptr() as u64;
+
+            let mem_slot = self
+                .memory_manager
+                .lock()
+                .unwrap()
+                .create_userspace_mapping(base.raw_value(), size, host_addr, false, false, false)
+                .map_err(DeviceManagerError::MemoryManager)?;
+
+            virtio_shm_list.mem_slot = mem_slot;
+            virtio_shm_list.addr = base.clone();
+
+            // Adding the region to the memory manager, would allow to share this with the vhost-user backend
+            let guest_mmap = Arc::new(GuestRegionMmap::new(mmap_region, base).map_err(DeviceManagerError::GuestRegionMmap)?);
+            self.memory_manager.lock().unwrap().add_mem_region(guest_mmap).map_err(DeviceManagerError::MemoryManager)?;
+
+            let nimble_new_devices = virtio_devices::vhost_user::NimbleNet::new(
+                        id.clone(),
+                        virtio_shm_list,
+                        vu_cfg,
+                        server,
+                        self.seccomp_action.clone(),
+                        self.exit_evt
+                            .try_clone()
+                            .map_err(DeviceManagerError::EventFd)?,
+                        self.force_iommu,
+                        snapshot
+                            .map(|s| s.to_versioned_state())
+                            .transpose()
+                            .map_err(DeviceManagerError::RestoreGetState)?,
+                    ).map_err(DeviceManagerError::CreateVhostUserNimbleNet)?;
+
+            let vhost_user_nimble_net = Arc::new(Mutex::new(nimble_new_devices));
+
+
+            // \TODO: Update the device tree with the migratable device.
+            node.migratable = Some(Arc::clone(&vhost_user_nimble_net) as Arc<Mutex<dyn Migratable>>);
+            self.device_tree.lock().unwrap().insert(id.clone(), node);
+
+            Ok(MetaVirtioDevice {
+                virtio_device: vhost_user_nimble_net as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
+                iommu: nimble_net_cfg.iommu,
+                id,
+                pci_segment: nimble_net_cfg.pci_segment,
+                dma_handler: None,
+            })
+        } else {
+            Err(DeviceManagerError::NoVirtioNimbleNetSock)
+        }
+    } 
+
+    fn make_virtio_nimble_net_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
+        let mut devices = Vec::new();
+        // Add virtio-nimble-net if required
+        let mut nimble_net_devices = self.config.lock().unwrap().nimble_net.clone();
+        if let Some(nimble_net_list_cfg) = &mut nimble_net_devices {
+            for nimble_net_cfg in nimble_net_list_cfg.iter_mut() {
+                devices.push(self.make_virtio_nimble_net_device(nimble_net_cfg)?);
+            }
+        }
+        self.config.lock().unwrap().nimble_net = nimble_net_devices;
 
         Ok(devices)
     }
@@ -4111,6 +4312,17 @@ impl DeviceManager {
         }
 
         let device = self.make_virtio_pmem_device(pmem_cfg)?;
+        self.hotplug_virtio_pci_device(device)
+    }
+
+    pub fn add_nimble_net(&mut self, nimble_net_cfg: &mut NimbleNetConfig) -> DeviceManagerResult<PciDeviceInfo> {
+        self.validate_identifier(&nimble_net_cfg.id)?;
+
+        if nimble_net_cfg.iommu && !self.is_iommu_segment(nimble_net_cfg.pci_segment) {
+            return Err(DeviceManagerError::InvalidIommuHotplug);
+        }
+
+        let device = self.make_virtio_nimble_net_device(nimble_net_cfg)?;
         self.hotplug_virtio_pci_device(device)
     }
 

@@ -40,7 +40,8 @@ pub enum VirtioDeviceType {
     Fs = 26,
     Pmem = 27,
     Watchdog = 35, // Temporary until official number allocated
-    Unknown = 0xFF,
+    NimbleNet = 65000, // Temporary choosen a high number 
+    Unknown = 0xFFFFFFFF,
 }
 
 impl From<u32> for VirtioDeviceType {
@@ -60,6 +61,7 @@ impl From<u32> for VirtioDeviceType {
             26 => VirtioDeviceType::Fs,
             27 => VirtioDeviceType::Pmem,
             35 => VirtioDeviceType::Watchdog,
+            65000 => VirtioDeviceType::NimbleNet,
             _ => VirtioDeviceType::Unknown,
         }
     }
@@ -85,6 +87,7 @@ impl fmt::Display for VirtioDeviceType {
             VirtioDeviceType::Fs => "fs",
             VirtioDeviceType::Pmem => "pmem",
             VirtioDeviceType::Watchdog => "watchdog",
+            VirtioDeviceType::NimbleNet => "nimble",
             VirtioDeviceType::Unknown => "UNKNOWN",
         };
         write!(f, "{output}")

@@ -17,6 +17,9 @@ homepage = "https://github.com/cloud-hypervisor/cloud-hypervisor"
 # c.) There is a security issue that is addressed by the toolchain update.
 rust-version = "1.62"
 
+[profile.dev]
+debug-assertions = false
+
 [profile.release]
 lto = true
 codegen-units = 1

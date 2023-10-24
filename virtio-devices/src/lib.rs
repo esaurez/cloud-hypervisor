@@ -57,7 +57,7 @@ use vm_virtio::VirtioDeviceType;
 
 type GuestMemoryMmap = vm_memory::GuestMemoryMmap<AtomicBitmap>;
 type GuestRegionMmap = vm_memory::GuestRegionMmap<AtomicBitmap>;
-type MmapRegion = vm_memory::MmapRegion<AtomicBitmap>;
+pub type MmapRegion = vm_memory::MmapRegion<AtomicBitmap>;
 
 const DEVICE_INIT: u32 = 0x00;
 const DEVICE_ACKNOWLEDGE: u32 = 0x01;
@@ -78,6 +78,8 @@ const VIRTIO_F_NOTIFICATION_DATA: u32 = 38;
 
 #[derive(Error, Debug)]
 pub enum ActivateError {
+    #[error("Invalid parameters user when activating")]
+    InvalidParameters,
     #[error("Failed to activate virtio device")]
     BadActivate,
     #[error("Failed to clone exit event fd: {0}")]

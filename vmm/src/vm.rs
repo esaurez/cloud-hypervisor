@@ -13,7 +13,7 @@
 
 use crate::config::{
     add_to_config, DeviceConfig, DiskConfig, FsConfig, HotplugMethod, NetConfig, PmemConfig,
-    UserDeviceConfig, ValidationError, VdpaConfig, VmConfig, VsockConfig,
+    UserDeviceConfig, NimbleNetConfig, ValidationError, VdpaConfig, VmConfig, VsockConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
@@ -1434,6 +1434,11 @@ impl Vm {
             pmem.retain(|dev| dev.id.as_ref() != Some(&id));
         }
 
+        // Remove if nimble'net device
+        if let Some(nimble_net) = config.nimble_net.as_mut() {
+            nimble_net.retain(|dev| dev.id.as_ref() != Some(&id));
+        }
+
         // Remove if vDPA device
         if let Some(vdpa) = config.vdpa.as_mut() {
             vdpa.retain(|dev| dev.id.as_ref() != Some(&id));
@@ -1515,6 +1520,30 @@ impl Vm {
         {
             let mut config = self.config.lock().unwrap();
             add_to_config(&mut config.pmem, pmem_cfg);
+        }
+
+        self.device_manager
+            .lock()
+            .unwrap()
+            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
+            .map_err(Error::DeviceManager)?;
+
+        Ok(pci_device_info)
+    }
+
+    pub fn add_nimble_net(&mut self, mut nimble_net_cfg: NimbleNetConfig) -> Result<PciDeviceInfo> {
+        let pci_device_info = self
+            .device_manager
+            .lock()
+            .unwrap()
+            .add_nimble_net(&mut nimble_net_cfg)
+            .map_err(Error::DeviceManager)?;
+
+        // Update VmConfig by adding the new device. This is important to
+        // ensure the device would be created in case of a reboot.
+        {
+            let mut config = self.config.lock().unwrap();
+            add_to_config(&mut config.nimble_net, nimble_net_cfg);
         }
 
         self.device_manager
