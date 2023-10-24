@@ -1593,7 +1593,7 @@ impl NimbleNetConfig {
         let vhost_socket = parser.get("socket");
         let vhost_mode = parser
             .convert("vhost_mode")
-            .map_err(Error::ParseNetwork)?
+            .map_err(Error::ParseNimbleNet)?
             .unwrap_or_default();
         let pci_segment = parser
             .convert("pci_segment")

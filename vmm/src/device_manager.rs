@@ -489,6 +489,9 @@ pub enum DeviceManagerError {
     // Failed to create guest region mmap
     GuestRegionMmap(vm_memory::mmap::Error),
 
+    // Failed to create ffi C string
+    CreateCString(ffi::NulError),
+
 }
 pub type DeviceManagerResult<T> = result::Result<T, DeviceManagerError>;
 
@@ -2840,7 +2843,8 @@ impl DeviceManager {
                    0 
                 };
 
-        let res = unsafe { libc::syscall(libc::SYS_memfd_create, ffi::CString::new(name).unwrap(), flags) };
+        let syscall_name_param  = ffi::CString::new(name).map_err(DeviceManagerError::CreateCString)?;
+        let res = unsafe { libc::syscall(libc::SYS_memfd_create, syscall_name_param.as_ptr(), flags) };
 
         if res < 0 {
             return Err(DeviceManagerError::CreateMemfd(io::Error::last_os_error()));
@@ -2870,7 +2874,7 @@ impl DeviceManager {
         )
         .map_err(DeviceManagerError::NewMmapRegion)?;
 
-    let host_addr =  mmap_region.as_ptr() as u64;
+        let host_addr =  mmap_region.as_ptr() as u64;
 
         let region_list = vec![VirtioSharedMemory {
             offset: 0,
@@ -2911,7 +2915,7 @@ impl DeviceManager {
         if let Some(socket) = &nimble_net_cfg.vhost_socket {
             // Make shared anonymous file to be used as a shared memory mapping
             let size = nimble_net_cfg.size.unwrap();
-            let fo = Self::create_anonymous_file_segment("nimble_net", size, true, None)?;
+            let fo = Self::create_anonymous_file_segment(&id, size, true, None)?;
 
             // Allocate memory from the mmio_allocator
             let prefault : bool = false;

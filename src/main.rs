@@ -724,6 +724,7 @@ mod unit_tests {
             user_devices: None,
             vdpa: None,
             vsock: None,
+            nimble_net: None,
             iommu: false,
             #[cfg(target_arch = "x86_64")]
             sgx_epc: None,
