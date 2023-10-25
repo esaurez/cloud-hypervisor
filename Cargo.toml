@@ -96,6 +96,7 @@ members = [
     "vhdx",
     "vhost_user_block",
     "vhost_user_net",
+    "vhost_user_nimble_net",
     "virtio-devices",
     "vmm",
     "vm-allocator",

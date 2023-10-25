@@ -1475,6 +1475,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vhost_user_nimble_net"
+version = "0.1.0"
+dependencies = [
+ "argh",
+ "env_logger",
+ "epoll",
+ "libc",
+ "log",
+ "option_parser",
+ "vhost",
+ "vhost-user-backend",
+ "virtio-bindings 0.2.0",
+ "vm-memory",
+ "vmm-sys-util",
+]
+
+[[package]]
 name = "virtio-bindings"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
