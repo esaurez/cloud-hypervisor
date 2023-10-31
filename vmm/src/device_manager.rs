@@ -2854,25 +2854,13 @@ impl DeviceManager {
         let f = unsafe { File::from_raw_fd(res as RawFd) };
         f.set_len(size).map_err(DeviceManagerError::SharedFileSetLen)?;
 
-        let fo = FileOffset::new(f, 0);
-        
-        Ok(fo)
+        Ok(FileOffset::new(f, 0))
     } 
 
-    fn mmap_file_offset(fo: &FileOffset, prefault: bool, size: usize) -> DeviceManagerResult<(MmapRegion, VirtioSharedMemoryList)>
+    fn mmap_file_offset(fo: &FileOffset, size: usize) -> DeviceManagerResult<(MmapRegion, VirtioSharedMemoryList)>
     {
-        let mut mmap_flags = libc::MAP_NORESERVE | libc::MAP_SHARED;
-        if prefault {
-            mmap_flags |= libc::MAP_POPULATE;
-        }
-
-        let mmap_region = MmapRegion::build(
-            Some(fo.clone()),
-            size as usize,
-            libc::PROT_READ | libc::PROT_WRITE,
-            mmap_flags,
-        )
-        .map_err(DeviceManagerError::NewMmapRegion)?;
+        let mmap_region = MmapRegion::from_file(fo.clone(), size)
+                                                        .map_err(DeviceManagerError::NewMmapRegion)?;
 
         let host_addr =  mmap_region.as_ptr() as u64;
 
@@ -2915,11 +2903,11 @@ impl DeviceManager {
         if let Some(socket) = &nimble_net_cfg.vhost_socket {
             // Make shared anonymous file to be used as a shared memory mapping
             let size = nimble_net_cfg.size.unwrap();
-            let fo = Self::create_anonymous_file_segment(&id, size, true, None)?;
+            // \TODO consider using huge pages in both file and mmap
+            let fo = Self::create_anonymous_file_segment(&id, size, false, None)?;
 
             // Allocate memory from the mmio_allocator
-            let prefault : bool = false;
-            let (mmap_region, mut virtio_shm_list) = Self::mmap_file_offset(&fo, prefault, size as usize)?;
+            let (mmap_region, mut virtio_shm_list) = Self::mmap_file_offset(&fo, size as usize)?;
 
             let vu_cfg = VhostUserConfig {
                 socket: socket.clone(),

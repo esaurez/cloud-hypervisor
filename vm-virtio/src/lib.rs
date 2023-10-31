@@ -40,7 +40,8 @@ pub enum VirtioDeviceType {
     Fs = 26,
     Pmem = 27,
     Watchdog = 35, // Temporary until official number allocated
-    NimbleNet = 60000, // Temporary choosen a high number, don't use number bigger than 61000 as this will overflow id calculation
+    NimbleNet = 63, // Temporary choosen number, don't use number bigger than 61000 as this will overflow id calculation
+    // Also numbers over 64 may not be handle by utility applications like lspci
     Unknown = 0xFFFFFFFF,
 }
 
@@ -61,7 +62,7 @@ impl From<u32> for VirtioDeviceType {
             26 => VirtioDeviceType::Fs,
             27 => VirtioDeviceType::Pmem,
             35 => VirtioDeviceType::Watchdog,
-            60000 => VirtioDeviceType::NimbleNet,
+            63 => VirtioDeviceType::NimbleNet,
             _ => VirtioDeviceType::Unknown,
         }
     }

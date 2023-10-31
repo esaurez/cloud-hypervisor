@@ -31,7 +31,7 @@ use vm_migration::{
 };
 use vmm_sys_util::eventfd::EventFd;
 
-const DEFAULT_QUEUE_NUMBER: usize = 2;
+const DEFAULT_QUEUE_NUMBER: usize = 1;
 
 #[derive(Versionize)]
 pub struct State {
