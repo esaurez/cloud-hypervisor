@@ -1,11 +1,11 @@
-use ::core::ops::{
-        Deref,
-        DerefMut,
-    };
+use ::core::ops::{Deref, DerefMut};
 use std::{io, slice};
 
 use option_parser::OptionParserError;
-use vm_memory::{GuestMemoryError, GuestMemoryAtomic, GuestAddress, bitmap::AtomicBitmap, GuestAddressSpace, GuestMemory, GuestMemoryRegion, GuestMemoryLoadGuard};
+use vm_memory::{
+    bitmap::AtomicBitmap, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic,
+    GuestMemoryError, GuestMemoryLoadGuard, GuestMemoryRegion,
+};
 
 pub type GuestMemoryMmap = vm_memory::GuestMemoryMmap<AtomicBitmap>;
 
@@ -70,7 +70,7 @@ impl Clone for Segment {
             offset: self.offset,
             size: self.size,
         }
-    }    
+    }
 }
 
 pub struct MemGuard {
@@ -79,14 +79,15 @@ pub struct MemGuard {
 }
 
 impl MemGuard {
-    pub fn new(mem_guard: &GuestMemoryLoadGuard<GuestMemoryMmap>, gpa: GuestAddress) -> Result<MemGuard> {
+    pub fn new(
+        mem_guard: &GuestMemoryLoadGuard<GuestMemoryMmap>,
+        gpa: GuestAddress,
+    ) -> Result<MemGuard> {
         let region = mem_guard.find_region(gpa).ok_or(Error::RegionNotFound)?;
-        Ok(
-            MemGuard {
-                addr: region.as_ptr(),
-                size: region.len(),
-            }
-        )
+        Ok(MemGuard {
+            addr: region.as_ptr(),
+            size: region.len(),
+        })
     }
 }
 
@@ -95,16 +96,15 @@ pub struct SharedMemory {
     _mem: GuestMemoryAtomic<GuestMemoryMmap>,
     _mem_snapshot: GuestMemoryLoadGuard<GuestMemoryMmap>,
     // mem_guard should never be copied out from Shared Memory, as it depends on the data of _mem_snapshot
-    mem_guard: MemGuard, 
+    mem_guard: MemGuard,
     offset: usize,
     size: usize,
-
 }
 
-pub trait SegmentsManager : Send {
+pub trait SegmentsManager: Send {
     fn create_region(&mut self, segment_name: &str, segment_size: u64) -> Result<Segment>;
     fn get_region(&mut self, segment_name: &str) -> Result<Segment>;
-    fn mmap_region(&mut self, segment: &Segment) -> Result<SharedMemory>;
+    fn mmap_region(&self, segment: &Segment) -> Result<SharedMemory>;
 }
 
 impl SharedMemory {
@@ -122,7 +122,7 @@ impl SharedMemory {
             _mem_snapshot: mem_snapshot,
             mem_guard,
             offset,
-            size
+            size,
         })
     }
 }
@@ -131,14 +131,16 @@ impl Deref for SharedMemory {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        let slice = unsafe { slice::from_raw_parts(self.mem_guard.addr, self.mem_guard.size as usize) };
-        &slice[self.offset..self.offset+self.size]
+        let slice =
+            unsafe { slice::from_raw_parts(self.mem_guard.addr, self.mem_guard.size as usize) };
+        &slice[self.offset..self.offset + self.size]
     }
 }
 
 impl<'a> DerefMut for SharedMemory {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let slice = unsafe { slice::from_raw_parts_mut(self.mem_guard.addr, self.mem_guard.size as usize) };
-        &mut slice[self.offset..self.offset+self.size]
+        let slice =
+            unsafe { slice::from_raw_parts_mut(self.mem_guard.addr, self.mem_guard.size as usize) };
+        &mut slice[self.offset..self.offset + self.size]
     }
 }

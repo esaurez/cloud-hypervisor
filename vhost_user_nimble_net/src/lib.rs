@@ -4,14 +4,13 @@ pub mod base;
 
 use libc::{self, EFD_NONBLOCK};
 use log::*;
-use option_parser::{Toggle, ByteSized};
 use option_parser::OptionParser;
-use vm_memory::{GuestAddress, Address, GuestAddressSpace, GuestMemory, GuestMemoryRegion, Bytes};
+use option_parser::{ByteSized, Toggle};
 use std::collections::HashMap;
+use std::io;
 use std::mem::size_of;
 use std::ops::Deref;
 use std::os::raw::c_char;
-use std::io;
 use std::process;
 use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
 use std::vec::Vec;
@@ -20,10 +19,11 @@ use vhost::vhost_user::Listener;
 use vhost_user_backend::{VhostUserBackendMut, VhostUserDaemon, VringRwLock, VringState, VringT};
 use virtio_bindings::virtio_config::{VIRTIO_F_NOTIFY_ON_EMPTY, VIRTIO_F_VERSION_1};
 use virtio_queue::{DescriptorChain, QueueT};
-use vm_memory::{bitmap::AtomicBitmap, GuestMemoryAtomic, ByteValued, GuestMemoryLoadGuard};
+use vm_memory::{bitmap::AtomicBitmap, ByteValued, GuestMemoryAtomic, GuestMemoryLoadGuard};
+use vm_memory::{Address, Bytes, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryRegion};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use base::{Error, Result, Segment, GuestMemoryMmap, SegmentsManager, SharedMemory};
+use base::{Error, GuestMemoryMmap, Result, Segment, SegmentsManager, SharedMemory};
 
 type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
@@ -101,7 +101,7 @@ struct VirtioNimbleRespSetAddr {
     _reserved: [u8; 7],
 }
 
-const VIRTIO_NIMBLE_REQ_TYPE_SET_ADDR: u8 =  0;
+const VIRTIO_NIMBLE_REQ_TYPE_SET_ADDR: u8 = 0;
 const VIRTIO_NIMBLE_REQ_TYPE_GET_SEGMENT: u8 = 1;
 const VIRTIO_NIMBLE_REQ_TYPE_CREATE_SEGMENT: u8 = 2;
 
@@ -124,10 +124,7 @@ pub struct ShmemManager {
 }
 
 impl ShmemManager {
-    pub fn new(
-        mem: GuestMemoryAtomic<GuestMemoryMmap>,
-        region_size: u64
-    ) -> Self {
+    pub fn new(mem: GuestMemoryAtomic<GuestMemoryMmap>, region_size: u64) -> Self {
         ShmemManager {
             mem,
             region_addr: None,
@@ -141,10 +138,7 @@ impl ShmemManager {
         self.region_addr.is_some()
     }
 
-    pub fn init(
-        &mut self,
-        gpa: GuestAddress,
-    ) -> Result<()> {
+    pub fn init(&mut self, gpa: GuestAddress) -> Result<()> {
         let mem_guard = self.mem.memory();
         let region = mem_guard.find_region(gpa).ok_or(Error::RegionNotFound)?;
         // The regions used by the shared memory where explicitly created to match
@@ -163,7 +157,11 @@ impl ShmemManager {
 impl SegmentsManager for ShmemManager {
     fn create_region(&mut self, segment_name: &str, segment_size: u64) -> Result<Segment> {
         if self.segment_map.contains_key(segment_name) {
-            return Ok(self.segment_map.get(segment_name).ok_or(Error::SegmentRetrieval)?.clone());
+            return Ok(self
+                .segment_map
+                .get(segment_name)
+                .ok_or(Error::SegmentRetrieval)?
+                .clone());
         }
 
         if self.current_offset + segment_size > self.size {
@@ -177,7 +175,8 @@ impl SegmentsManager for ShmemManager {
             offset,
             size: segment_size,
         };
-        self.segment_map.insert(segment_name.to_string(), segment.clone());
+        self.segment_map
+            .insert(segment_name.to_string(), segment.clone());
         Ok(segment)
     }
 
@@ -188,15 +187,17 @@ impl SegmentsManager for ShmemManager {
         }
     }
 
-    fn mmap_region(&mut self, segment: &Segment) -> Result<SharedMemory> {
+    fn mmap_region(&self, segment: &Segment) -> Result<SharedMemory> {
         let offset = segment.offset as usize;
         let size = segment.size as usize;
         let region_addr = match self.region_addr {
-            Some(addr) => { addr },
-            None => { return Err(Error::SegmentManagerInitialization); }
+            Some(addr) => addr,
+            None => {
+                return Err(Error::SegmentManagerInitialization);
+            }
         };
-        if offset + size > (self.size as usize){
-            return Err(Error::SegmentTooLarge)
+        if offset + size > (self.size as usize) {
+            return Err(Error::SegmentTooLarge);
         }
         let mem = self.mem.clone();
         SharedMemory::new(mem, region_addr, offset, size)
@@ -221,10 +222,10 @@ struct VhostUserNimbleNetThread {
 }
 
 impl VhostUserNimbleNetThread {
-    /// Create a new virtio nimble net device 
+    /// Create a new virtio nimble net device
     fn new(
         mem: GuestMemoryAtomic<GuestMemoryMmap>,
-        shmem_manager: Arc<Mutex<ShmemManager>>
+        shmem_manager: Arc<Mutex<ShmemManager>>,
     ) -> Result<Self> {
         Ok(VhostUserNimbleNetThread {
             event_idx: false,
@@ -270,19 +271,17 @@ impl VhostUserNimbleNetThread {
         let reply: Result<Vec<u8>> = match req_head.type_ {
             VIRTIO_NIMBLE_REQ_TYPE_SET_ADDR => {
                 self.process_set_address(desc_chain, req_addr, desc_size_left)
-            },
+            }
             VIRTIO_NIMBLE_REQ_TYPE_GET_SEGMENT => {
                 self.process_get_segment(desc_chain, req_addr, desc_size_left)
-            },
+            }
             VIRTIO_NIMBLE_REQ_TYPE_CREATE_SEGMENT => {
                 self.process_create_segment(desc_chain, req_addr, desc_size_left)
-            },
-            _ => {
-                Err(Error::InvalidRequest)
             }
+            _ => Err(Error::InvalidRequest),
         };
 
-        let reply_vec  = reply?;
+        let reply_vec = reply?;
 
         let resp_desc = desc_chain.next().ok_or(Error::DescriptorChainTooShort)?;
 
@@ -294,10 +293,9 @@ impl VhostUserNimbleNetThread {
         Ok(reply_vec.len())
     }
 
-
     fn process_set_address(
         &mut self,
-        desc_chain: &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>, 
+        desc_chain: &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>,
         req_addr: GuestAddress,
         remaining_space: usize,
     ) -> Result<Vec<u8>> {
@@ -311,9 +309,14 @@ impl VhostUserNimbleNetThread {
             .read_obj(req_addr as GuestAddress)
             .map_err(Error::GuestMemory)?;
 
-        let mut sm = self.segment_manager.lock().map_err(|e|{Error::BackendLock { error: e.to_string() }})?;
+        let mut sm = self
+            .segment_manager
+            .lock()
+            .map_err(|e| Error::BackendLock {
+                error: e.to_string(),
+            })?;
         if sm.initialized() {
-            return Err(Error::InvalidRequest)
+            return Err(Error::InvalidRequest);
         }
 
         sm.init(GuestAddress::new(req.addr))?;
@@ -328,7 +331,7 @@ impl VhostUserNimbleNetThread {
 
     fn process_get_segment(
         &mut self,
-        desc_chain: &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>, 
+        desc_chain: &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>,
         req_addr: GuestAddress,
         remaining_space: usize,
     ) -> Result<Vec<u8>> {
@@ -346,9 +349,14 @@ impl VhostUserNimbleNetThread {
         let name_cstr = unsafe { std::ffi::CStr::from_ptr(req.name.as_ptr()) };
         let str_slice = name_cstr.to_str().map_err(Error::StringConversion)?;
 
-        let mut sm = self.segment_manager.lock().map_err(|e|{Error::BackendLock { error: e.to_string() }})?;
+        let mut sm = self
+            .segment_manager
+            .lock()
+            .map_err(|e| Error::BackendLock {
+                error: e.to_string(),
+            })?;
         if !sm.initialized() {
-            return Err(Error::SegmentManagerInitialization)
+            return Err(Error::SegmentManagerInitialization);
         }
         let region = sm.get_region(str_slice)?;
         let resp = VirtioNimbleRespGet {
@@ -356,13 +364,39 @@ impl VhostUserNimbleNetThread {
             offset: region.offset,
         };
         response.extend_from_slice(resp.as_slice());
-            
+
         Ok(response)
     }
 
+    fn check_segments_except(
+        &self,
+        str_slice: &str,
+        mut segments: HashMap<String, Segment>,
+        sm: &ShmemManager,
+    ) -> Result<()> {
+        // Remove the segment with an offset of except_offset
+        segments.remove(str_slice);
+        for (name, segment) in segments {
+            let shmem = sm.mmap_region(&segment)?;
+            let shmem_ref: &[u8] = &shmem;
+            // Check that the first 4 bytes of the segment are region_offset+3, region_offset+2, region_offset+1, region_offset
+            let region_offset = segment.offset as u32;
+            for i in 0..4 {
+                let offset: u32 = i * 4;
+                let value = (region_offset + 3 - i).to_le_bytes();
+                // Copy value to the next 4 bytes of shmem_ref
+                if shmem_ref[offset as usize..(offset + 4) as usize] != value {
+                    // panic
+                    panic!("Segment {} has invalid format", name);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn process_create_segment(
-        &mut self, 
-        desc_chain:  &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>, 
+        &mut self,
+        desc_chain: &mut DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap>>,
         req_addr: GuestAddress,
         remaining_space: usize,
     ) -> Result<Vec<u8>> {
@@ -379,14 +413,34 @@ impl VhostUserNimbleNetThread {
         let name_cstr = unsafe { std::ffi::CStr::from_ptr(req.name.as_ptr()) };
         let str_slice = name_cstr.to_str().map_err(Error::StringConversion)?;
 
-        let mut sm = self.segment_manager.lock().map_err(|e|{Error::BackendLock { error: e.to_string() }})?;
+        let mut sm = self
+            .segment_manager
+            .lock()
+            .map_err(|e| Error::BackendLock {
+                error: e.to_string(),
+            })?;
         if !sm.initialized() {
-            return Err(Error::SegmentManagerInitialization)
+            return Err(Error::SegmentManagerInitialization);
         }
         let region = sm.create_region(str_slice, req.size)?;
         if region.size != req.size {
             return Err(Error::SegmentTooLarge);
         }
+        // Mmap the region and write to the first 32-bit words
+        let mut shmem = sm.mmap_region(&region)?;
+        let shmem_ref: &mut [u8] = &mut shmem;
+        let region_offset = region.offset as u32;
+        for i in 0..4 {
+            let offset: u32 = i * 4;
+            let value = (i + region_offset).to_le_bytes();
+            // Copy value to the next 4 bytes of shmem_ref
+            shmem_ref[offset as usize..(offset + 4) as usize].copy_from_slice(&value);
+        }
+
+        let segments = sm.segment_map.clone();
+        // Check that all previously created segments have the right format
+        self.check_segments_except(str_slice, segments, &sm)?;
+
         let resp = VirtioNimbleRespCreate {
             offset: region.offset,
         };
@@ -407,14 +461,14 @@ impl VhostUserNimbleNetThread {
         {
             debug!("got an element in the queue");
             let len: usize = match self.handle(&mut desc_chain) {
-                Ok(written) => { written }
+                Ok(written) => written,
                 Err(err) => {
                     error!("failed to parse available descriptor chain: {:?}", err);
                     0
                 }
             };
 
-            let len32 : u32 = len.try_into().unwrap();
+            let len32: u32 = len.try_into().unwrap();
 
             vring
                 .get_queue_mut()
@@ -479,7 +533,6 @@ impl VhostUserNimbleNetBackend {
             mem,
         })
     }
-
 }
 
 impl VhostUserBackendMut<VringRwLock<GuestMemoryAtomic<GuestMemoryMmap>>, AtomicBitmap>
@@ -521,7 +574,7 @@ impl VhostUserBackendMut<VringRwLock<GuestMemoryAtomic<GuestMemoryMmap>>, Atomic
             0 => {
                 let mut vring = vrings[0].get_mut();
                 // \TODO consider polling the queue
-                 if thread.event_idx {
+                if thread.event_idx {
                     // vm-virtio's Queue implementation only checks avail_index
                     // once, so to properly support EVENT_IDX we need to keep
                     // calling process_queue() until it stops finding new
@@ -544,7 +597,6 @@ impl VhostUserBackendMut<VringRwLock<GuestMemoryAtomic<GuestMemoryMmap>>, Atomic
             }
             _ => return Err(Error::HandleEventUnknownEvent.into()),
         }
-
     }
 
     fn exit_event(&self, thread_index: usize) -> Option<EventFd> {
@@ -597,7 +649,8 @@ impl VhostUserNimbleNetBackendConfig {
         let size = parser
             .convert::<ByteSized>("size")
             .map_err(Error::FailedConfigParse)?
-            .map(|v| v.0).ok_or(Error::SizeParameterMissing)?;
+            .map(|v| v.0)
+            .ok_or(Error::SizeParameterMissing)?;
 
         let socket = parser.get("socket").ok_or(Error::SocketParameterMissing)?;
 
@@ -607,7 +660,6 @@ impl VhostUserNimbleNetBackendConfig {
             .unwrap_or(Toggle(false))
             .0;
 
-
         let num_queues = parser
             .convert("num_queues")
             .map_err(Error::FailedConfigParse)?
@@ -616,7 +668,6 @@ impl VhostUserNimbleNetBackendConfig {
             .convert("queue_size")
             .map_err(Error::FailedConfigParse)?
             .unwrap_or(2);
-
 
         Ok(VhostUserNimbleNetBackendConfig {
             size,

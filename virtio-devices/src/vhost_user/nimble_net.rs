@@ -7,12 +7,11 @@ use crate::seccomp_filters::Thread;
 use crate::thread_helper::spawn_virtio_thread;
 use crate::vhost_user::VhostUserCommon;
 use crate::{
-    ActivateResult, UserspaceMapping, VirtioCommon, VirtioDevice,
-    VirtioInterrupt, VirtioSharedMemoryList, VIRTIO_F_IOMMU_PLATFORM,
+    ActivateResult, UserspaceMapping, VirtioCommon, VirtioDevice, VirtioInterrupt,
+    VirtioSharedMemoryList, VIRTIO_F_IOMMU_PLATFORM,
 };
 use crate::{GuestMemoryMmap, GuestRegionMmap};
 use seccompiler::SeccompAction;
-use vm_virtio::VirtioDeviceType;
 use std::result;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Barrier, Mutex};
@@ -20,15 +19,14 @@ use std::thread;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vhost::vhost_user::message::{VhostUserProtocolFeatures, VhostUserVirtioFeatures};
-use vhost::vhost_user::{
-    MasterReqHandler, VhostUserMaster, VhostUserMasterReqHandler,
-};
+use vhost::vhost_user::{MasterReqHandler, VhostUserMaster, VhostUserMasterReqHandler};
 use virtio_queue::Queue;
 use vm_memory::{GuestAddress, GuestMemoryAtomic};
 use vm_migration::{
     protocol::MemoryRangeTable, Migratable, MigratableError, Pausable, Snapshot, Snapshottable,
     Transportable, VersionMapped,
 };
+use vm_virtio::VirtioDeviceType;
 use vmm_sys_util::eventfd::EventFd;
 
 const DEFAULT_QUEUE_NUMBER: usize = 1;
@@ -42,7 +40,6 @@ pub struct State {
 }
 
 impl VersionMapped for State {}
-
 
 struct FrontendReqHandler {}
 
@@ -77,76 +74,71 @@ impl NimbleNet {
         iommu: bool,
         state: Option<State>,
     ) -> Result<NimbleNet> {
-
         let num_queues = vu_cfg.num_queues;
 
         let mut vu =
             VhostUserHandle::connect_vhost_user(server, &vu_cfg.socket, num_queues as u64, false)?;
 
-        let (
-            avail_features,
-            acked_features,
-            acked_protocol_features,
-            vu_num_queues,
-            paused,
-        ) = if let Some(state) = state {
-            info!("Restoring vhost-user-nimble-net {}", id);
+        let (avail_features, acked_features, acked_protocol_features, vu_num_queues, paused) =
+            if let Some(state) = state {
+                info!("Restoring vhost-user-nimble-net {}", id);
 
-            vu.set_protocol_features_vhost_user(
-                state.acked_features,
-                state.acked_protocol_features,
-            )?;
+                vu.set_protocol_features_vhost_user(
+                    state.acked_features,
+                    state.acked_protocol_features,
+                )?;
 
-            (
-                state.avail_features,
-                state.acked_features,
-                state.acked_protocol_features,
-                state.vu_num_queues,
-                true,
-            )
-        } else {
-            // Filling device and vring features VMM supports.
-            let avail_features = DEFAULT_VIRTIO_FEATURES;
+                (
+                    state.avail_features,
+                    state.acked_features,
+                    state.acked_protocol_features,
+                    state.vu_num_queues,
+                    true,
+                )
+            } else {
+                // Filling device and vring features VMM supports.
+                let avail_features = DEFAULT_VIRTIO_FEATURES;
 
-            let avail_protocol_features = VhostUserProtocolFeatures::CONFIG
-                | VhostUserProtocolFeatures::MQ
-                | VhostUserProtocolFeatures::CONFIGURE_MEM_SLOTS
-                | VhostUserProtocolFeatures::REPLY_ACK
-                | VhostUserProtocolFeatures::INFLIGHT_SHMFD
-                | VhostUserProtocolFeatures::LOG_SHMFD;
+                let avail_protocol_features = VhostUserProtocolFeatures::CONFIG
+                    | VhostUserProtocolFeatures::MQ
+                    | VhostUserProtocolFeatures::CONFIGURE_MEM_SLOTS
+                    | VhostUserProtocolFeatures::REPLY_ACK
+                    | VhostUserProtocolFeatures::INFLIGHT_SHMFD
+                    | VhostUserProtocolFeatures::LOG_SHMFD;
 
-            let (acked_features, acked_protocol_features) =
-                vu.negotiate_features_vhost_user(avail_features, avail_protocol_features)?;
+                let (acked_features, acked_protocol_features) =
+                    vu.negotiate_features_vhost_user(avail_features, avail_protocol_features)?;
 
-            let backend_num_queues =
-                if acked_protocol_features & VhostUserProtocolFeatures::MQ.bits() != 0 {
-                    vu.socket_handle()
-                        .get_queue_num()
-                        .map_err(Error::VhostUserGetQueueMaxNum)? as usize
-                } else {
-                    DEFAULT_QUEUE_NUMBER
-                };
+                let backend_num_queues =
+                    if acked_protocol_features & VhostUserProtocolFeatures::MQ.bits() != 0 {
+                        vu.socket_handle()
+                            .get_queue_num()
+                            .map_err(Error::VhostUserGetQueueMaxNum)?
+                            as usize
+                    } else {
+                        DEFAULT_QUEUE_NUMBER
+                    };
 
-            if num_queues > backend_num_queues {
-                error!(
+                if num_queues > backend_num_queues {
+                    error!(
                 "vhost-user-nimble-net requested too many queues ({}) since the backend only supports {}\n",
                 num_queues, backend_num_queues
             );
-                return Err(Error::BadQueueNum);
-            }
+                    return Err(Error::BadQueueNum);
+                }
 
-            (
-                acked_features,
-                // If part of the available features that have been acked, the
-                // PROTOCOL_FEATURES bit must be already set through the VIRTIO
-                // acked features as we know the guest would never ack it, thus
-                // the feature would be lost.
-                acked_features & VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits(),
-                acked_protocol_features,
-                num_queues,
-                false,
-            )
-        };
+                (
+                    acked_features,
+                    // If part of the available features that have been acked, the
+                    // PROTOCOL_FEATURES bit must be already set through the VIRTIO
+                    // acked features as we know the guest would never ack it, thus
+                    // the feature would be lost.
+                    acked_features & VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits(),
+                    acked_protocol_features,
+                    num_queues,
+                    false,
+                )
+            };
 
         Ok(NimbleNet {
             common: VirtioCommon {
@@ -172,11 +164,9 @@ impl NimbleNet {
             epoll_thread: None,
             exit_evt,
             iommu,
-            virtio_shm_list
+            virtio_shm_list,
         })
     }
-
-    
 
     fn state(&self) -> State {
         State {
@@ -254,7 +244,7 @@ impl VirtioDevice for NimbleNet {
             kill_evt,
             pause_evt,
         )?;
-        
+
         //\TODO may need to add a thread for the control queues here
 
         let paused = self.common.paused.clone();

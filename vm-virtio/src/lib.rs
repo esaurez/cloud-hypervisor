@@ -39,7 +39,7 @@ pub enum VirtioDeviceType {
     Mem = 24,
     Fs = 26,
     Pmem = 27,
-    Watchdog = 35, // Temporary until official number allocated
+    Watchdog = 35,  // Temporary until official number allocated
     NimbleNet = 63, // Temporary choosen number, don't use number bigger than 61000 as this will overflow id calculation
     // Also numbers over 64 may not be handle by utility applications like lspci
     Unknown = 0xFFFFFFFF,
