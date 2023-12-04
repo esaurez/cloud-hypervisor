@@ -543,6 +543,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PmemConfig"
+        nimble_net:
+          $ref: "#/components/schemas/NimbleNetConfig"
         serial:
           $ref: "#/components/schemas/ConsoleConfig"
         console:
@@ -932,6 +934,34 @@ components:
           format: int16
         id:
           type: string
+
+    NimbleNetConfig:
+      required:
+        - vhost_socket 
+      type: object
+      properties:
+        size:
+          type: integer
+          format: uint64
+        iommu:
+          type: boolean
+          default: false
+        num_queues:
+          type: integer
+          default: 1
+        queue_size:
+          type: integer
+          default: 2 
+        vhost_socket:
+          type: string
+        vhost_mode:
+          type: string
+          default: "Client"
+        id:
+          type: string
+        pci_segment:
+          type: integer
+          format: int16
 
     ConsoleConfig:
       required:
