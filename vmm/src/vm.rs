@@ -12,8 +12,8 @@
 //
 
 use crate::config::{
-    add_to_config, DeviceConfig, DiskConfig, FsConfig, HotplugMethod, NetConfig, PmemConfig,
-    UserDeviceConfig, NimbleNetConfig, ValidationError, VdpaConfig, VmConfig, VsockConfig,
+    add_to_config, DeviceConfig, DiskConfig, FsConfig, HotplugMethod, NetConfig, NimbleNetConfig,
+    PmemConfig, UserDeviceConfig, ValidationError, VdpaConfig, VmConfig, VsockConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]

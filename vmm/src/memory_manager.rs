@@ -1425,9 +1425,7 @@ impl MemoryManager {
         Ok(start_addr)
     }
 
-    pub fn add_mem_region(
-        &mut self, new_region: Arc<GuestRegionMmap>, 
-    ) -> Result<(), Error> {
+    pub fn add_mem_region(&mut self, new_region: Arc<GuestRegionMmap>) -> Result<(), Error> {
         self.add_region(new_region)?;
         Ok(())
     }
