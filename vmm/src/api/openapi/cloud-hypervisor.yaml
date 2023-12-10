@@ -544,7 +544,9 @@ components:
           items:
             $ref: "#/components/schemas/PmemConfig"
         nimble_net:
-          $ref: "#/components/schemas/NimbleNetConfig"
+          type: array
+          items:
+            $ref: "#/components/schemas/NimbleNetConfig"
         serial:
           $ref: "#/components/schemas/ConsoleConfig"
         console:
